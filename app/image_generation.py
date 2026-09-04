@@ -19,16 +19,26 @@ def is_image_request(query: str) -> bool:
 
 
 def generate_image(prompt: str) -> dict:
-    """Call an optional self-hosted Stable Diffusion-compatible image engine."""
+    """Call the self-hosted Game API image engine."""
     if not IMAGE_ENGINE_URL:
         raise RuntimeError(
             "The local image engine is not connected yet. Configure IMAGE_ENGINE_URL "
-            "to a self-hosted Stable Diffusion-compatible server."
+            "to the self-hosted image-generation service."
         )
 
-    payload = json.dumps({"prompt": prompt, "steps": 20, "width": 768, "height": 768}).encode()
-    headers = {"Content-Type": "application/json"}
+    payload = json.dumps({
+        "prompt": prompt,
+        "steps": 12,
+        "width": 512,
+        "height": 512,
+    }).encode("utf-8")
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Game-API-AI/1.0",
+    }
     if IMAGE_ENGINE_API_KEY:
+        headers["x-api-key"] = IMAGE_ENGINE_API_KEY
         headers["Authorization"] = f"Bearer {IMAGE_ENGINE_API_KEY}"
 
     request = Request(
@@ -38,7 +48,7 @@ def generate_image(prompt: str) -> dict:
         method="POST",
     )
 
-    with urlopen(request, timeout=180) as response:
+    with urlopen(request, timeout=240) as response:
         result = json.loads(response.read().decode("utf-8"))
 
     images = result.get("images") or []
