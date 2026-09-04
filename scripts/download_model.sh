@@ -3,7 +3,7 @@ set -eu
 
 MODEL_PATH="${MODEL_PATH:-/tmp/model.gguf}"
 MODEL_DIR="$(dirname "$MODEL_PATH")"
-MODEL_URL="${MODEL_URL:-https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/1208e45d782fe18602c5eaf10e5758d5b0f24c03/Qwen3-0.6B-Q4_K_M.gguf?download=true}"
+MODEL_URL="${MODEL_URL:-https://huggingface.co/QuantFactory/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct.Q4_K_M.gguf?download=true}"
 
 mkdir -p "$MODEL_DIR"
 
@@ -12,7 +12,7 @@ if [ -s "$MODEL_PATH" ]; then
   exit 0
 fi
 
-echo "Downloading small Qwen3-0.6B Q4_K_M model with Hugging Face Hub..."
+echo "Downloading small SmolLM2-135M-Instruct Q4_K_M model..."
 echo "Destination: $MODEL_PATH"
 
 python - "$MODEL_PATH" "$MODEL_URL" <<'PY'
@@ -52,8 +52,8 @@ if downloaded_path.resolve() != output.resolve():
     downloaded_path.replace(output)
 
 size = output.stat().st_size
-if size < 250 * 1024 * 1024:
-    raise RuntimeError(f"Downloaded model is unexpectedly small: {size} bytes")
+if size < 50 * 1024 * 1024 or size > 200 * 1024 * 1024:
+    raise RuntimeError(f"Downloaded model size is outside the expected range: {size} bytes")
 
 print(f"AI model download complete: {output}")
 print(f"Model size: {size / (1024**2):.0f} MiB")
