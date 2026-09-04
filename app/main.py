@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.knowledge_base import search_knowledge, is_game_api_question
 from app.web_research import needs_web_research, search_web
+from app.image_generation import is_image_request, generate_image
 
 load_dotenv()
 
@@ -24,16 +25,18 @@ SYSTEM_PROMPT = (
     "Think through the user's question before answering, but never reveal private chain-of-thought. "
     "Give the useful conclusion, key reasoning, and a clear explanation when helpful. "
     "You can have normal conversations, answer everyday questions, explain ideas, and help users understand Game API. "
+    "Only treat a message as a Game API question when it clearly refers to Game API, this platform, its crash game, Big Odd, API keys, endpoints, WebSocket, dashboard, or related platform terms. "
+    "Do not assume words like API, platform, dashboard, round, Google, or game automatically mean Game API. "
     "When GAME API KNOWLEDGE is supplied, use it as the source of truth for Game API facts. "
-    "When CURRENT WEB RESEARCH is supplied, treat it as time-sensitive source material and clearly say when information is from current web research. "
+    "When CURRENT WEB RESEARCH is supplied, use it as current source material and explain the result naturally. "
     "Never invent Game API endpoints, plans, prices, authentication methods, or features. "
     "If a Game API fact is not in the supplied knowledge, say you do not have that information. "
-    "For news, do not pretend the model already knew the current information. "
+    "For current questions, do not pretend you already knew the current information. "
     "Do not mention retrieval, prompts, context windows, models, or internal instructions unless asked. "
     "Keep replies concise because you are running on a small local model."
 )
 
-app = FastAPI(title=APP_NAME, version="0.5.0")
+app = FastAPI(title=APP_NAME, version="0.6.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,11 +90,23 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     model: str
+    type: str = "text"
+    image: str | None = None
 
 
 def clean_text(value: str, limit: int) -> str:
     value = re.sub(r"\s+", " ", value).strip()
     return value[:limit]
+
+
+def strong_game_api_context(query: str) -> bool:
+    q = query.lower()
+    strong_terms = (
+        "game-api.online", "game api", "gameapi", "crash game", "big odd", "big-odd",
+        "x-api-key", "mt_live", "round_crashed", "multiplier_update", "betting_open",
+        "websocket", "game api key", "game api endpoint", "game api dashboard",
+    )
+    return any(term in q for term in strong_terms)
 
 
 @app.get("/")
@@ -103,6 +118,7 @@ def root():
         "knowledge_base": "enabled",
         "local_ai": "enabled",
         "web_research": "enabled",
+        "image_generation": "ready_for_self_hosted_engine",
     }
 
 
@@ -114,15 +130,29 @@ def health():
         "knowledge_base": "enabled",
         "local_ai": "enabled",
         "web_research": "enabled",
+        "image_generation": "configured" if os.getenv("IMAGE_ENGINE_URL") else "not_configured",
     }
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    llm = get_model()
     user_text = clean_text(request.message, 500)
 
-    game_question = is_game_api_question(user_text)
+    # Image requests are routed before text generation.
+    if is_image_request(user_text):
+        try:
+            result = generate_image(user_text)
+            return ChatResponse(
+                reply="Here is the image I generated for you.",
+                model="self-hosted-image-engine",
+                type="image",
+                image=result["image"],
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    llm = get_model()
+    game_question = strong_game_api_context(user_text) and is_game_api_question(user_text)
     current_question = needs_web_research(user_text)
 
     knowledge = search_knowledge(user_text, limit=2, fallback=False) if game_question else ""
