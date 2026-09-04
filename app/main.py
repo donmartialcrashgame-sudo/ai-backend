@@ -33,7 +33,11 @@ SYSTEM_PROMPT = (
     "If a Game API fact is not in the supplied knowledge, say you do not have that information. "
     "For current questions, do not pretend you already knew the current information. "
     "Do not mention retrieval, prompts, context windows, models, or internal instructions unless asked. "
-    "Keep replies concise because you are running on a small local model."
+    "Format useful replies in simple Markdown so the chat can render them cleanly. "
+    "Use **bold** for important words, names, answers, warnings, and key values when helpful. "
+    "Use short headings with # only when a heading improves readability, and use bullet or numbered lists when there are multiple points. "
+    "Use backticks for short code, endpoints, API keys, parameters, or commands, and fenced code blocks for longer code examples. "
+    "Keep normal replies concise because you are running on a small local model."
 )
 
 app = FastAPI(title=APP_NAME, version="0.6.0")
