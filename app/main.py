@@ -26,7 +26,7 @@ SYSTEM_PROMPT = os.getenv(
     "If the website context does not contain the answer, say that clearly instead of guessing.",
 )
 
-app = FastAPI(title=APP_NAME, version="0.2.0")
+app = FastAPI(title=APP_NAME, version="0.2.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -111,20 +111,30 @@ def health():
 def chat(request: ChatRequest):
     llm = get_model()
 
-    website_context = search_site(request.message)
+    # Keep the tiny 135M model inside its 512-token context window.
+    # Website retrieval is useful, but sending too much retrieved text plus
+    # conversation history can make llama.cpp reject the prompt.
+    try:
+        website_context = search_site(request.message)
+    except Exception:
+        website_context = "Website search is temporarily unavailable."
+
+    website_context = website_context[:1400]
     knowledge_message = (
-        "Live knowledge retrieved from https://game-api.online. "
-        "Use it only when relevant to the user's question.\n\n"
-        + website_context
+        "Game API website knowledge:\n" + website_context
     )
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.append({"role": "system", "content": knowledge_message})
-    messages.extend(
-        {"role": item.role, "content": item.content}
-        for item in request.history[-6:]
-    )
-    messages.append({"role": "user", "content": request.message})
+
+    # Only keep a small amount of recent conversation so the prompt remains
+    # safe for the small local model.
+    recent_history = request.history[-2:]
+    for item in recent_history:
+        content = item.content[:700]
+        messages.append({"role": item.role, "content": content})
+
+    messages.append({"role": "user", "content": request.message[:1500]})
 
     try:
         result = llm.create_chat_completion(
