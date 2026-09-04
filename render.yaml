@@ -12,15 +12,15 @@ services:
     disk:
       name: ai-model-data
       mountPath: /var/data
-      sizeGB: 5
+      sizeGB: 2
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
       - key: MODEL_PATH
-        value: /var/data/model.gguf
+        value: /tmp/model.gguf
       - key: MODEL_URL
-        value: https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf?download=true
+        value: https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf?download=true
       - key: MODEL_N_CTX
-        value: 4096
+        value: 1024
       - key: MODEL_MAX_TOKENS
-        value: 512
+        value: 128
