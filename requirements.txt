@@ -1,6 +1,8 @@
 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
 pydantic==2.11.7
 llama-cpp-python==0.3.35
 python-dotenv==1.1.1
+huggingface_hub[hf_xet]>=0.32.0
