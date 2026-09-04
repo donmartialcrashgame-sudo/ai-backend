@@ -4,6 +4,8 @@ set -eu
 MODEL_PATH="${MODEL_PATH:-/tmp/model.gguf}"
 MODEL_DIR="$(dirname "$MODEL_PATH")"
 MODEL_URL="${MODEL_URL:-https://huggingface.co/QuantFactory/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct.Q4_K_M.gguf?download=true}"
+DOWNLOAD_LOG="${MODEL_PATH}.download.log"
+DOWNLOAD_PID_FILE="${MODEL_PATH}.download.pid"
 
 mkdir -p "$MODEL_DIR"
 
@@ -12,10 +14,20 @@ if [ -s "$MODEL_PATH" ]; then
   exit 0
 fi
 
-echo "Downloading small SmolLM2-135M-Instruct Q4_K_M model..."
-echo "Destination: $MODEL_PATH"
+if [ -f "$DOWNLOAD_PID_FILE" ]; then
+  PID="$(cat "$DOWNLOAD_PID_FILE" 2>/dev/null || true)"
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    echo "AI model download already running in background (PID $PID)."
+    exit 0
+  fi
+  rm -f "$DOWNLOAD_PID_FILE"
+fi
 
-python - "$MODEL_PATH" "$MODEL_URL" <<'PY'
+echo "Starting small SmolLM2-135M-Instruct Q4_K_M model download in the background..."
+echo "Destination: $MODEL_PATH"
+echo "Download log: $DOWNLOAD_LOG"
+
+nohup python - "$MODEL_PATH" "$MODEL_URL" >"$DOWNLOAD_LOG" 2>&1 <<'PY' &
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -59,4 +71,7 @@ print(f"AI model download complete: {output}")
 print(f"Model size: {size / (1024**2):.0f} MiB")
 PY
 
-ls -lh "$MODEL_PATH"
+PID=$!
+echo "$PID" > "$DOWNLOAD_PID_FILE"
+echo "Background model download started with PID $PID."
+exit 0
