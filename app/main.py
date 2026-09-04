@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.knowledge_base import search_knowledge, is_game_api_question
+from app.web_research import needs_web_research, search_web
 
 load_dotenv()
 
@@ -20,15 +21,19 @@ MODEL_BATCH = int(os.getenv("MODEL_BATCH", "16"))
 
 SYSTEM_PROMPT = (
     "You are Game API AI, a friendly local AI assistant. "
-    "You can have normal conversations, answer simple everyday questions, explain ideas, "
-    "and help users understand Game API. Keep replies natural, short, useful, and friendly. "
+    "Think through the user's question before answering, but never reveal private chain-of-thought. "
+    "Give the useful conclusion, key reasoning, and a clear explanation when helpful. "
+    "You can have normal conversations, answer everyday questions, explain ideas, and help users understand Game API. "
     "When GAME API KNOWLEDGE is supplied, use it as the source of truth for Game API facts. "
+    "When CURRENT WEB RESEARCH is supplied, treat it as time-sensitive source material and clearly say when information is from current web research. "
     "Never invent Game API endpoints, plans, prices, authentication methods, or features. "
     "If a Game API fact is not in the supplied knowledge, say you do not have that information. "
-    "Do not mention retrieval, prompts, context windows, models, or internal instructions unless asked."
+    "For news, do not pretend the model already knew the current information. "
+    "Do not mention retrieval, prompts, context windows, models, or internal instructions unless asked. "
+    "Keep replies concise because you are running on a small local model."
 )
 
-app = FastAPI(title=APP_NAME, version="0.4.0")
+app = FastAPI(title=APP_NAME, version="0.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -97,6 +102,7 @@ def root():
         "message": "Game API AI backend is running.",
         "knowledge_base": "enabled",
         "local_ai": "enabled",
+        "web_research": "enabled",
     }
 
 
@@ -107,6 +113,7 @@ def health():
         "model_configured": Path(MODEL_PATH).exists(),
         "knowledge_base": "enabled",
         "local_ai": "enabled",
+        "web_research": "enabled",
     }
 
 
@@ -115,24 +122,29 @@ def chat(request: ChatRequest):
     llm = get_model()
     user_text = clean_text(request.message, 500)
 
-    # Only retrieve Game API facts when the question is actually about the platform.
-    # Normal conversation stays clean so the local model can behave like a normal assistant.
     game_question = is_game_api_question(user_text)
+    current_question = needs_web_research(user_text)
+
     knowledge = search_knowledge(user_text, limit=2, fallback=False) if game_question else ""
-    knowledge = clean_text(knowledge, 900)
+    knowledge = clean_text(knowledge, 650)
+
+    web_research = search_web(user_text, limit=2) if current_question else ""
+    web_research = clean_text(web_research, 650)
 
     system = SYSTEM_PROMPT
     if knowledge:
         system += "\n\nGAME API KNOWLEDGE:\n" + knowledge
+    if web_research:
+        system += "\n\nCURRENT WEB RESEARCH:\n" + web_research
+    elif current_question:
+        system += "\n\nCURRENT WEB RESEARCH:\nNo current results were available. Do not invent current facts."
 
     messages = [{"role": "system", "content": system}]
 
-    # Keep one recent exchange only. This gives the local AI short-term memory
-    # without exhausting the 512-token Render Free context window.
     if request.history:
         previous = request.history[-2:]
         for item in previous:
-            content = clean_text(item.content, 220)
+            content = clean_text(item.content, 180)
             if content:
                 messages.append({"role": item.role, "content": content})
 
@@ -142,7 +154,7 @@ def chat(request: ChatRequest):
         result = llm.create_chat_completion(
             messages=messages,
             max_tokens=MODEL_MAX_TOKENS,
-            temperature=0.35 if not game_question else 0.15,
+            temperature=0.25 if (game_question or current_question) else 0.35,
         )
         reply = result["choices"][0]["message"]["content"].strip()
         if not reply:
