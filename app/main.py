@@ -22,15 +22,12 @@ SYSTEM_PROMPT = os.getenv(
     "If information is not available in your knowledge, say so clearly.",
 )
 
-app = FastAPI(title=APP_NAME, version="0.1.1")
+app = FastAPI(title=APP_NAME, version="0.1.2")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://game-api.online",
-        "https://www.game-api.online",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -53,7 +50,6 @@ def get_model():
     try:
         from llama_cpp import Llama
 
-        # Keep the llama.cpp memory footprint deliberately small for Render Free.
         _llm = Llama(
             model_path=str(model_file),
             n_ctx=MODEL_N_CTX,
