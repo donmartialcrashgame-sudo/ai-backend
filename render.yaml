@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: game-api-ai
+    runtime: python
+    plan: starter
+    region: frankfurt
+    branch: main
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: MODEL_PATH
+        value: models/model.gguf
+      - key: MODEL_N_CTX
+        value: 4096
+      - key: MODEL_MAX_TOKENS
+        value: 512
