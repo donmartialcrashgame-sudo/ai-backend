@@ -1,3 +1,5 @@
+import re
+
 # Curated brain/knowledge layer for Game API AI.
 # This teaches the assistant through retrieval; it does not change model weights.
 
