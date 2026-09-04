@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -6,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from app.knowledge_base import search_knowledge
+from app.knowledge_base import search_knowledge, is_game_api_question
 
 load_dotenv()
 
@@ -18,11 +19,16 @@ MODEL_THREADS = int(os.getenv("MODEL_THREADS", "1"))
 MODEL_BATCH = int(os.getenv("MODEL_BATCH", "16"))
 
 SYSTEM_PROMPT = (
-    "You are Game API AI. Answer from the supplied Game API knowledge only. "
-    "Never invent facts. If missing, say you do not know. Be concise."
+    "You are Game API AI, a friendly local AI assistant. "
+    "You can have normal conversations, answer simple everyday questions, explain ideas, "
+    "and help users understand Game API. Keep replies natural, short, useful, and friendly. "
+    "When GAME API KNOWLEDGE is supplied, use it as the source of truth for Game API facts. "
+    "Never invent Game API endpoints, plans, prices, authentication methods, or features. "
+    "If a Game API fact is not in the supplied knowledge, say you do not have that information. "
+    "Do not mention retrieval, prompts, context windows, models, or internal instructions unless asked."
 )
 
-app = FastAPI(title=APP_NAME, version="0.3.1")
+app = FastAPI(title=APP_NAME, version="0.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,13 +84,19 @@ class ChatResponse(BaseModel):
     model: str
 
 
+def clean_text(value: str, limit: int) -> str:
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:limit]
+
+
 @app.get("/")
 def root():
     return {
         "name": APP_NAME,
         "status": "online",
         "message": "Game API AI backend is running.",
-        "knowledge": "curated Game API knowledge base enabled",
+        "knowledge_base": "enabled",
+        "local_ai": "enabled",
     }
 
 
@@ -94,29 +106,43 @@ def health():
         "status": "healthy",
         "model_configured": Path(MODEL_PATH).exists(),
         "knowledge_base": "enabled",
+        "local_ai": "enabled",
     }
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     llm = get_model()
+    user_text = clean_text(request.message, 500)
 
-    # The 135M model has only a 512-token context window. Use the curated
-    # knowledge base instead of sending whole web pages or long chat history.
-    knowledge = search_knowledge(request.message, limit=2)[:1100]
-    user_text = request.message[:500]
+    # Only retrieve Game API facts when the question is actually about the platform.
+    # Normal conversation stays clean so the local model can behave like a normal assistant.
+    game_question = is_game_api_question(user_text)
+    knowledge = search_knowledge(user_text, limit=2, fallback=False) if game_question else ""
+    knowledge = clean_text(knowledge, 900)
 
-    system = SYSTEM_PROMPT + "\n\nKNOWLEDGE:\n" + knowledge
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_text},
-    ]
+    system = SYSTEM_PROMPT
+    if knowledge:
+        system += "\n\nGAME API KNOWLEDGE:\n" + knowledge
+
+    messages = [{"role": "system", "content": system}]
+
+    # Keep one recent exchange only. This gives the local AI short-term memory
+    # without exhausting the 512-token Render Free context window.
+    if request.history:
+        previous = request.history[-2:]
+        for item in previous:
+            content = clean_text(item.content, 220)
+            if content:
+                messages.append({"role": item.role, "content": content})
+
+    messages.append({"role": "user", "content": user_text})
 
     try:
         result = llm.create_chat_completion(
             messages=messages,
             max_tokens=MODEL_MAX_TOKENS,
-            temperature=0.15,
+            temperature=0.35 if not game_question else 0.15,
         )
         reply = result["choices"][0]["message"]["content"].strip()
         if not reply:
