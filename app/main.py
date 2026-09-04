@@ -6,6 +6,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from app.site_knowledge import search_site
+
 load_dotenv()
 
 APP_NAME = os.getenv("APP_NAME", "Game API AI")
@@ -19,10 +21,12 @@ SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
     "You are Game API AI, the official assistant for game-api.online. "
     "Be helpful, accurate, concise, and never invent API details. "
-    "If information is not available in your knowledge, say so clearly.",
+    "Use the live Game API website context supplied with each request when it is relevant. "
+    "Treat that context as the source of truth for Game API website information. "
+    "If the website context does not contain the answer, say that clearly instead of guessing.",
 )
 
-app = FastAPI(title=APP_NAME, version="0.1.2")
+app = FastAPI(title=APP_NAME, version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -90,6 +94,7 @@ def root():
         "name": APP_NAME,
         "status": "online",
         "message": "Game API AI backend is running.",
+        "knowledge": "live game-api.online website search enabled",
     }
 
 
@@ -98,6 +103,7 @@ def health():
     return {
         "status": "healthy",
         "model_configured": Path(MODEL_PATH).exists(),
+        "website_knowledge": "enabled",
     }
 
 
@@ -105,7 +111,15 @@ def health():
 def chat(request: ChatRequest):
     llm = get_model()
 
+    website_context = search_site(request.message)
+    knowledge_message = (
+        "Live knowledge retrieved from https://game-api.online. "
+        "Use it only when relevant to the user's question.\n\n"
+        + website_context
+    )
+
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.append({"role": "system", "content": knowledge_message})
     messages.extend(
         {"role": item.role, "content": item.content}
         for item in request.history[-6:]
