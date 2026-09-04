@@ -6,27 +6,26 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from app.site_knowledge import search_site
+from app.knowledge_base import search_knowledge
 
 load_dotenv()
 
 APP_NAME = os.getenv("APP_NAME", "Game API AI")
 MODEL_PATH = os.getenv("MODEL_PATH", "/tmp/model.gguf")
 MODEL_N_CTX = int(os.getenv("MODEL_N_CTX", "512"))
-MODEL_MAX_TOKENS = int(os.getenv("MODEL_MAX_TOKENS", "128"))
+MODEL_MAX_TOKENS = int(os.getenv("MODEL_MAX_TOKENS", "96"))
 MODEL_THREADS = int(os.getenv("MODEL_THREADS", "1"))
 MODEL_BATCH = int(os.getenv("MODEL_BATCH", "16"))
 
-SYSTEM_PROMPT = os.getenv(
-    "SYSTEM_PROMPT",
+SYSTEM_PROMPT = (
     "You are Game API AI, the official assistant for game-api.online. "
-    "Be helpful, accurate, concise, and never invent API details. "
-    "Use the live Game API website context supplied with each request when it is relevant. "
-    "Treat that context as the source of truth for Game API website information. "
-    "If the website context does not contain the answer, say that clearly instead of guessing.",
+    "Answer using the supplied Game API knowledge. "
+    "Never invent endpoints, prices, limits, features, or credentials. "
+    "If the knowledge does not contain an answer, say you do not have that information. "
+    "Keep answers short and clear."
 )
 
-app = FastAPI(title=APP_NAME, version="0.2.1")
+app = FastAPI(title=APP_NAME, version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,10 +45,7 @@ def get_model():
 
     model_file = Path(MODEL_PATH)
     if not model_file.exists():
-        raise HTTPException(
-            status_code=503,
-            detail=f"AI model file not found at {MODEL_PATH}.",
-        )
+        raise HTTPException(status_code=503, detail=f"AI model file not found at {MODEL_PATH}.")
 
     try:
         from llama_cpp import Llama
@@ -67,8 +63,6 @@ def get_model():
             verbose=False,
         )
         return _llm
-    except HTTPException:
-        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"AI model failed to load: {exc}")
 
@@ -94,7 +88,7 @@ def root():
         "name": APP_NAME,
         "status": "online",
         "message": "Game API AI backend is running.",
-        "knowledge": "live game-api.online website search enabled",
+        "knowledge": "curated Game API knowledge base enabled",
     }
 
 
@@ -103,7 +97,7 @@ def health():
     return {
         "status": "healthy",
         "model_configured": Path(MODEL_PATH).exists(),
-        "website_knowledge": "enabled",
+        "knowledge_base": "enabled",
     }
 
 
@@ -111,42 +105,37 @@ def health():
 def chat(request: ChatRequest):
     llm = get_model()
 
-    # Keep the tiny 135M model inside its 512-token context window.
-    # Website retrieval is useful, but sending too much retrieved text plus
-    # conversation history can make llama.cpp reject the prompt.
-    try:
-        website_context = search_site(request.message)
-    except Exception:
-        website_context = "Website search is temporarily unavailable."
+    # Retrieve only a few highly relevant facts. This is much more reliable
+    # for the small local model than dumping an entire website into its prompt.
+    knowledge = search_knowledge(request.message, limit=3)
+    knowledge = knowledge[:2200]
 
-    website_context = website_context[:1400]
-    knowledge_message = (
-        "Game API website knowledge:\n" + website_context
+    # Keep one compact system message plus one user message. This protects the
+    # 512-token context window of the Render Free model.
+    system = (
+        SYSTEM_PROMPT
+        + "\n\nGAME API KNOWLEDGE:\n"
+        + knowledge
+        + "\n\nUse only this knowledge for Game API facts."
     )
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.append({"role": "system", "content": knowledge_message})
-
-    # Only keep a small amount of recent conversation so the prompt remains
-    # safe for the small local model.
-    recent_history = request.history[-2:]
-    for item in recent_history:
-        content = item.content[:700]
-        messages.append({"role": item.role, "content": content})
-
-    messages.append({"role": "user", "content": request.message[:1500]})
+    # History is intentionally limited to one short turn. The knowledge base
+    # should supply facts; history is only for conversational continuity.
+    messages = [{"role": "system", "content": system}]
+    if request.history:
+        previous = request.history[-1]
+        messages.append({"role": previous.role, "content": previous.content[:350]})
+    messages.append({"role": "user", "content": request.message[:700]})
 
     try:
         result = llm.create_chat_completion(
             messages=messages,
             max_tokens=MODEL_MAX_TOKENS,
-            temperature=0.3,
+            temperature=0.2,
         )
         reply = result["choices"][0]["message"]["content"].strip()
         if not reply:
             raise RuntimeError("The model returned an empty response.")
         return ChatResponse(reply=reply, model=Path(MODEL_PATH).name)
-    except HTTPException:
-        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"AI generation failed: {exc}")
