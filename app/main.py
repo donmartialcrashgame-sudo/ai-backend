@@ -18,14 +18,11 @@ MODEL_THREADS = int(os.getenv("MODEL_THREADS", "1"))
 MODEL_BATCH = int(os.getenv("MODEL_BATCH", "16"))
 
 SYSTEM_PROMPT = (
-    "You are Game API AI, the official assistant for game-api.online. "
-    "Answer using the supplied Game API knowledge. "
-    "Never invent endpoints, prices, limits, features, or credentials. "
-    "If the knowledge does not contain an answer, say you do not have that information. "
-    "Keep answers short and clear."
+    "You are Game API AI. Answer from the supplied Game API knowledge only. "
+    "Never invent facts. If missing, say you do not know. Be concise."
 )
 
-app = FastAPI(title=APP_NAME, version="0.3.0")
+app = FastAPI(title=APP_NAME, version="0.3.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,7 +46,6 @@ def get_model():
 
     try:
         from llama_cpp import Llama
-
         _llm = Llama(
             model_path=str(model_file),
             n_ctx=MODEL_N_CTX,
@@ -105,33 +101,22 @@ def health():
 def chat(request: ChatRequest):
     llm = get_model()
 
-    # Retrieve only a few highly relevant facts. This is much more reliable
-    # for the small local model than dumping an entire website into its prompt.
-    knowledge = search_knowledge(request.message, limit=3)
-    knowledge = knowledge[:2200]
+    # The 135M model has only a 512-token context window. Use the curated
+    # knowledge base instead of sending whole web pages or long chat history.
+    knowledge = search_knowledge(request.message, limit=2)[:1100]
+    user_text = request.message[:500]
 
-    # Keep one compact system message plus one user message. This protects the
-    # 512-token context window of the Render Free model.
-    system = (
-        SYSTEM_PROMPT
-        + "\n\nGAME API KNOWLEDGE:\n"
-        + knowledge
-        + "\n\nUse only this knowledge for Game API facts."
-    )
-
-    # History is intentionally limited to one short turn. The knowledge base
-    # should supply facts; history is only for conversational continuity.
-    messages = [{"role": "system", "content": system}]
-    if request.history:
-        previous = request.history[-1]
-        messages.append({"role": previous.role, "content": previous.content[:350]})
-    messages.append({"role": "user", "content": request.message[:700]})
+    system = SYSTEM_PROMPT + "\n\nKNOWLEDGE:\n" + knowledge
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_text},
+    ]
 
     try:
         result = llm.create_chat_completion(
             messages=messages,
             max_tokens=MODEL_MAX_TOKENS,
-            temperature=0.2,
+            temperature=0.15,
         )
         reply = result["choices"][0]["message"]["content"].strip()
         if not reply:
